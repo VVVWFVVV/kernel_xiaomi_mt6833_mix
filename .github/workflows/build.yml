@@ -274,6 +274,66 @@ jobs:
             fi
           fi
 
+          # --- 4.14 seccomp: keep the filter on the BakaSU manager itself ---
+          # On 4.14 seccomp_cache.c compiles to nothing (#if >= 5.10), so the
+          # setuid hook cannot allow-list a single syscall and calls
+          # disable_seccomp() instead. That also strips the manager's own
+          # filter, which is why BakaSU reports "Seccomp: disabled".
+          if [ -f KernelSU/kernel/hook/setuid_hook.c ]; then
+            echo "==> [seccomp] 保留 manager 进程的 seccomp filter"
+            python3 - <<'PYEOF'
+import io, sys
+
+p = 'KernelSU/kernel/hook/setuid_hook.c'
+src = io.open(p, encoding='utf-8').read()
+lines = src.split('\n')
+
+# Two call sites share the same shape:
+#   #else
+#           disable_seccomp();
+#   #endif
+# The follow-up statement is used as the unique anchor for each.
+ANCHORS = {
+    'return 0;': 'manager-seccomp/susfs',
+    'ksu_clear_current_proc_unprivillege();': 'manager-seccomp/main',
+}
+
+patched = 0
+for i, line in enumerate(lines):
+    if line.strip() != 'disable_seccomp();':
+        continue
+    if i + 1 >= len(lines) or lines[i + 1].strip() != '#endif':
+        continue
+    follow = ''
+    for j in range(i + 2, min(i + 4, len(lines))):
+        if lines[j].strip():
+            follow = lines[j].strip()
+            break
+    if follow not in ANCHORS:
+        continue
+    indent = line[:len(line) - len(line.lstrip())]
+    inner = indent + '    '
+    lines[i:i + 1] = [
+        indent + '// 4.14: keep seccomp on the manager so its self-check reports',
+        indent + '// the real filter mode; other allowlisted uids still need it',
+        indent + '// cleared or privileged syscalls fail.',
+        indent + 'if (!ksu_is_manager_uid(new_uid)) {',
+        inner + 'disable_seccomp();',
+        indent + '}',
+    ]
+    patched += 1
+    print('  patched site: %s (line %d)' % (ANCHORS[follow], i + 1))
+
+if patched == 0:
+    sys.exit('setuid_hook.c: no disable_seccomp() site matched')
+io.open(p, 'w', encoding='utf-8').write('\n'.join(lines))
+print('  total patched sites: %d' % patched)
+PYEOF
+            grep -n 'keep seccomp on the manager' KernelSU/kernel/hook/setuid_hook.c || true
+          else
+            echo "  no KernelSU tree (Vanilla), skip seccomp patch"
+          fi
+
           echo "==> 追加配置到 evergo_defconfig"
           cfg=arch/arm64/configs/evergo_defconfig
 
