@@ -275,60 +275,14 @@ jobs:
           fi
 
           # --- 4.14 seccomp: keep the filter on the BakaSU manager itself ---
-          # On 4.14 seccomp_cache.c compiles to nothing (#if >= 5.10), so the
+          # seccomp_cache.c is entirely wrapped in #if >= 5.10, so on 4.14 the
           # setuid hook cannot allow-list a single syscall and calls
           # disable_seccomp() instead. That also strips the manager's own
           # filter, which is why BakaSU reports "Seccomp: disabled".
           if [ -f KernelSU/kernel/hook/setuid_hook.c ]; then
             echo "==> [seccomp] 保留 manager 进程的 seccomp filter"
-            python3 - <<'PYEOF'
-import io, sys
-
-p = 'KernelSU/kernel/hook/setuid_hook.c'
-src = io.open(p, encoding='utf-8').read()
-lines = src.split('\n')
-
-# Two call sites share the same shape:
-#   #else
-#           disable_seccomp();
-#   #endif
-# The follow-up statement is used as the unique anchor for each.
-ANCHORS = {
-    'return 0;': 'manager-seccomp/susfs',
-    'ksu_clear_current_proc_unprivillege();': 'manager-seccomp/main',
-}
-
-patched = 0
-for i, line in enumerate(lines):
-    if line.strip() != 'disable_seccomp();':
-        continue
-    if i + 1 >= len(lines) or lines[i + 1].strip() != '#endif':
-        continue
-    follow = ''
-    for j in range(i + 2, min(i + 4, len(lines))):
-        if lines[j].strip():
-            follow = lines[j].strip()
-            break
-    if follow not in ANCHORS:
-        continue
-    indent = line[:len(line) - len(line.lstrip())]
-    inner = indent + '    '
-    lines[i:i + 1] = [
-        indent + '// 4.14: keep seccomp on the manager so its self-check reports',
-        indent + '// the real filter mode; other allowlisted uids still need it',
-        indent + '// cleared or privileged syscalls fail.',
-        indent + 'if (!ksu_is_manager_uid(new_uid)) {',
-        inner + 'disable_seccomp();',
-        indent + '}',
-    ]
-    patched += 1
-    print('  patched site: %s (line %d)' % (ANCHORS[follow], i + 1))
-
-if patched == 0:
-    sys.exit('setuid_hook.c: no disable_seccomp() site matched')
-io.open(p, 'w', encoding='utf-8').write('\n'.join(lines))
-print('  total patched sites: %d' % patched)
-PYEOF
+            printf '%s' 'aW1wb3J0IGlvLCBzeXMKCnAgPSAnS2VybmVsU1Uva2VybmVsL2hvb2svc2V0dWlkX2hvb2suYycKc3JjID0gaW8ub3BlbihwLCBlbmNvZGluZz0ndXRmLTgnKS5yZWFkKCkKbGluZXMgPSBzcmMuc3BsaXQoJ1xuJykKCiMgT24gNC4xNCBzZWNjb21wX2NhY2hlLmMgY29tcGlsZXMgdG8gbm90aGluZyAoI2lmID49IDUuMTApLCBzbyB0aGUgc2V0dWlkCiMgaG9vayBjYW5ub3QgYWxsb3ctbGlzdCBhIHNpbmdsZSBzeXNjYWxsIGFuZCBmYWxscyBiYWNrIHRvIGRpc2FibGVfc2VjY29tcCgpLgojIFRoYXQgYWxzbyBzdHJpcHMgdGhlIGZpbHRlciBmcm9tIHRoZSBtYW5hZ2VyJ3Mgb3duIHByb2Nlc3MsIHdoaWNoIGlzIHdoeQojIEJha2FTVSByZXBvcnRzICJTZWNjb21wOiBkaXNhYmxlZCIgb24gaXRzIGhvbWUgc2NyZWVuLgojCiMgS2VlcCB0aGUgZmlsdGVyIG9uIHRoZSBtYW5hZ2VyIHVpZCBvbmx5LiBFdmVyeSBvdGhlciBhbGxvd2xpc3RlZCB1aWQKIyAoc2hlbGwsIGFkYiByb290KSBzdGlsbCBuZWVkcyBpdCBjbGVhcmVkIG9yIHByaXZpbGVnZWQgc3lzY2FsbHMgZmFpbC4KQU5DSE9SUyA9IHsKICAgICdyZXR1cm4gMDsnOiAnc3VzZnMnLAogICAgJ2tzdV9jbGVhcl9jdXJyZW50X3Byb2NfdW5wcml2aWxsZWdlKCk7JzogJ21haW4nLAp9CgpwYXRjaGVkID0gMApmb3IgaSwgbGluZSBpbiBlbnVtZXJhdGUobGluZXMpOgogICAgaWYgbGluZS5zdHJpcCgpICE9ICdkaXNhYmxlX3NlY2NvbXAoKTsnOgogICAgICAgIGNvbnRpbnVlCiAgICBpZiBpICsgMSA+PSBsZW4obGluZXMpIG9yIGxpbmVzW2kgKyAxXS5zdHJpcCgpICE9ICcjZW5kaWYnOgogICAgICAgIGNvbnRpbnVlCiAgICBmb2xsb3cgPSAnJwogICAgZm9yIGogaW4gcmFuZ2UoaSArIDIsIG1pbihpICsgNCwgbGVuKGxpbmVzKSkpOgogICAgICAgIGlmIGxpbmVzW2pdLnN0cmlwKCk6CiAgICAgICAgICAgIGZvbGxvdyA9IGxpbmVzW2pdLnN0cmlwKCkKICAgICAgICAgICAgYnJlYWsKICAgIGlmIGZvbGxvdyBub3QgaW4gQU5DSE9SUzoKICAgICAgICBjb250aW51ZQogICAgaW5kZW50ID0gbGluZVs6bGVuKGxpbmUpIC0gbGVuKGxpbmUubHN0cmlwKCkpXQogICAgaW5uZXIgPSBpbmRlbnQgKyAnICAgICcKICAgIGxpbmVzW2k6aSArIDFdID0gWwogICAgICAgIGluZGVudCArICcvLyA0LjE0OiBrZWVwIHNlY2NvbXAgb24gdGhlIG1hbmFnZXIgc28gaXRzIHNlbGYtY2hlY2sgcmVwb3J0cycsCiAgICAgICAgaW5kZW50ICsgJy8vIHRoZSByZWFsIGZpbHRlciBtb2RlOyBvdGhlciBhbGxvd2xpc3RlZCB1aWRzIHN0aWxsIG5lZWQgaXQnLAogICAgICAgIGluZGVudCArICcvLyBjbGVhcmVkIG9yIHByaXZpbGVnZWQgc3lzY2FsbHMgZmFpbC4nLAogICAgICAgIGluZGVudCArICdpZiAoIWtzdV9pc19tYW5hZ2VyX3VpZChuZXdfdWlkKSkgeycsCiAgICAgICAgaW5uZXIgKyAnZGlzYWJsZV9zZWNjb21wKCk7JywKICAgICAgICBpbmRlbnQgKyAnfScsCiAgICBdCiAgICBwYXRjaGVkICs9IDEKICAgIHByaW50KCcgIHBhdGNoZWQgJXMgc2l0ZSAobGluZSAlZCknICUgKEFOQ0hPUlNbZm9sbG93XSwgaSArIDEpKQoKaWYgcGF0Y2hlZCA9PSAwOgogICAgc3lzLmV4aXQoJ3NldHVpZF9ob29rLmM6IG5vIGRpc2FibGVfc2VjY29tcCgpIHNpdGUgbWF0Y2hlZCcpCmlvLm9wZW4ocCwgJ3cnLCBlbmNvZGluZz0ndXRmLTgnKS53cml0ZSgnXG4nLmpvaW4obGluZXMpKQpwcmludCgnICB0b3RhbCBwYXRjaGVkIHNpdGVzOiAlZCcgJSBwYXRjaGVkKQo=' | base64 -d > /tmp/ksu_seccomp_patch.py
+            python3 /tmp/ksu_seccomp_patch.py
             grep -n 'keep seccomp on the manager' KernelSU/kernel/hook/setuid_hook.c || true
           else
             echo "  no KernelSU tree (Vanilla), skip seccomp patch"
