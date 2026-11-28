@@ -307,6 +307,7 @@ jobs:
             BakaSU+SUSFS)
               cat >> "$cfg" <<'EOF'
           CONFIG_KSU=y
+          CONFIG_KSU_MANUAL_HOOK=y
           CONFIG_KSU_SUSFS=y
           CONFIG_KSU_SUSFS_SUS_PATH=y
           CONFIG_KSU_SUSFS_SUS_MOUNT=y
