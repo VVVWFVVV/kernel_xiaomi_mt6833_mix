@@ -238,7 +238,7 @@ jobs:
               "https://raw.githubusercontent.com/Baka-SU/BakaSU/main/kernel/setup.sh"
 
             bash /tmp/bakasu_setup.sh --cleanup || true
-            bash /tmp/bakasu_setup.sh
+            bash /tmp/bakasu_setup.sh 7b65bde0710b5e7c6f755545cb15a4abd417f3a8
 
             test -d KernelSU
             test -L drivers/kernelsu
